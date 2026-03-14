@@ -25,15 +25,15 @@ namespace Typing;
 public partial class ChatPanel : CanvasLayer
 {
 	const int MaxMessages = 50;
-	const int MaxInputLength = 200;
-	const float PanelWidth = 420f;
+	const int MaxInputLength = 400;
+	const float PanelWidth = 630f;
 	const float MessageAreaHeight = 250f;
-	const float InputBarHeight = 36f;
+	const float InputBarHeight = 72f;
 	const float TopOffset = 100f;
 	const float Margin = 30f;
-	const int FontSize = 18;
-	const int EmojiDisplaySize = 20;
-	const int EmojiButtonSize = 22;
+	const int FontSize = 36;
+	const int EmojiDisplaySize = 36;
+	const int EmojiButtonSize = 66;
 	const int EmojiColumns = 9;
 	const float NetworkCheckInterval = 1.0f;
 
