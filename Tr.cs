@@ -18,7 +18,7 @@ public static class L10n
         },
         ["zh_CN"] = new()
         {
-            ["input_placeholder"] = "Enter 发送，Esc 取消...",
+            ["input_placeholder"] = "请输入文本",
             ["power_status"] = "提示了{creature}的状态: ",
             ["target_alert"] = "提示注意{creature}",
             ["shared_card"] = "提示了卡牌",
