@@ -226,11 +226,6 @@ public partial class ChatPanel : CanvasLayer
             
             _chatContainer.GlobalPosition = newPos;
 
-			if (_emojiOpen)
-			{
-				PositionEmojiPopup();
-			}
-
             GetViewport().SetInputAsHandled();
             return;
         }
