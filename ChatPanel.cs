@@ -450,7 +450,7 @@ public partial class ChatPanel : CanvasLayer
     {
         var viewport = GetViewport().GetVisibleRect().Size;
         _chatContainer.Position = new Vector2(
-            viewport.X - PanelWidth - Margin,
+            Margin,
             TopOffset
         );
 
