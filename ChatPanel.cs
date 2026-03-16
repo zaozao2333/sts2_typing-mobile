@@ -29,6 +29,7 @@ public partial class ChatPanel : CanvasLayer
 	const float PanelWidth = 630f;
 	const float MessageAreaHeight = 250f;
 	const float InputBarHeight = 72f;
+	const float DragHandleHeight = 30f;
 	const float TopOffset = 100f;
 	const float Margin = 30f;
 	const int FontSize = 36;
@@ -43,6 +44,9 @@ public partial class ChatPanel : CanvasLayer
 	static readonly Color PlaceholderColor = new(0.55f, 0.55f, 0.65f);
 	static readonly Color DefaultNameColor = new(0.85f, 0.85f, 0.85f);
 	static readonly Color EmojiHoverColor = new(0.2f, 0.2f, 0.3f, 0.9f);
+	static readonly Color DragHandleColor = new(0.02f, 0.02f, 0.08f, 0.9f);
+	static readonly Color HandleIndicatorColor = new(0.2f, 0.45f, 0.9f);
+	static readonly Color CollapseIndicatorColor = new(1f, 1f, 1f);
 
 	Control _root = null!;
 	Control _chatContainer = null!;
@@ -54,6 +58,8 @@ public partial class ChatPanel : CanvasLayer
 	Button _emojiButton = null!;
 	Control _emojiOverlay = null!;
 	PanelContainer _emojiPopup = null!;
+	PanelContainer _dragHandle = null!; // 新增拖拽条
+	ColorRect _handleIndicator = null!; // 图片中的蓝色横条
 
 	bool _inputActive;
 	bool _emojiOpen;
@@ -66,9 +72,6 @@ public partial class ChatPanel : CanvasLayer
 	bool _isDragging;
 	Vector2 _dragStartMousePos;
 	Vector2 _dragStartContainerPos;
-
-	PanelContainer _dragHandle = null!; // 新增拖拽条
-	ColorRect _handleIndicator = null!; // 图片中的蓝色横条
 	bool _isCollapsed;
 
 	Control? _activePreview;
@@ -140,10 +143,10 @@ public partial class ChatPanel : CanvasLayer
 		_messagePanel.Visible = true;
 		_chatContainer.Visible = true;
 		_chatContainer.Modulate = new Color(1, 1, 1, 1); // 保持消息显示区域完全可见
+
+		_scroll.Set("follow_focus", true);
 		CloseEmojiPopup();
 		ManageNetworkLifecycle();
-        Log.Info("Test");
-        Log.Info("Chat Pos: " + _chatContainer.GlobalPosition.ToString());
 	}
 
 	public override void _ExitTree()
@@ -207,37 +210,37 @@ public partial class ChatPanel : CanvasLayer
         _messagePanel = new PanelContainer
         {
             Name = "MessagePanel",
-            MouseFilter = Control.MouseFilterEnum.Pass
+            MouseFilter = Control.MouseFilterEnum.Ignore
         };
 
         _inputBar = new PanelContainer
         {
             Name = "InputBar",
-            MouseFilter = Control.MouseFilterEnum.Stop // 设为 Stop 以保证输入框区域能拦截点击，不触发底层的长按拖拽
+            MouseFilter = Control.MouseFilterEnum.Stop
         };
 
         _scroll = new ScrollContainer
         {
             Name = "ScrollContainer",
             HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
-            MouseFilter = Control.MouseFilterEnum.Ignore
+            MouseFilter = Control.MouseFilterEnum.Stop
         };
 
         _messageList = new VBoxContainer
         {
             Name = "MessageList",
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            MouseFilter = Control.MouseFilterEnum.Ignore
+            MouseFilter = Control.MouseFilterEnum.Pass
         };
         _messageList.AddThemeConstantOverride("separation", 4);
 
 		_dragHandle = new PanelContainer {
 			Name = "DragHandle",
-			CustomMinimumSize = new Vector2(PanelWidth, 40), // 足够点击的高度
+			CustomMinimumSize = new Vector2(PanelWidth, DragHandleHeight), // 足够点击的高度
 			MouseFilter = Control.MouseFilterEnum.Stop
 		};
 		var handleStyle = new StyleBoxFlat {
-			BgColor = new Color(1, 1, 1, 0.9f), // 半透明白
+			BgColor = DragHandleColor,
 			CornerRadiusTopLeft = 15,
 			CornerRadiusTopRight = 15,
 			ContentMarginTop = 15
@@ -246,7 +249,7 @@ public partial class ChatPanel : CanvasLayer
 
 		// 蓝色指示条
 		_handleIndicator = new ColorRect {
-			Color = new Color(0.2f, 0.45f, 0.9f), // 亮蓝色
+			Color = HandleIndicatorColor, // 亮蓝色
 			CustomMinimumSize = new Vector2(60, 6),
 			SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter,
 			SizeFlagsVertical = Control.SizeFlags.ShrinkBegin
@@ -260,10 +263,6 @@ public partial class ChatPanel : CanvasLayer
 		_chatContainer.AddChild(_dragHandle); // 放在最上方
 		_chatContainer.AddChild(_messagePanel);
 		_chatContainer.AddChild(_inputBar);
-
-		// 调整位置偏移，让面板紧贴拖拽条下方
-		_messagePanel.Position = new Vector2(0, 40);
-		_inputBar.Position = new Vector2(0, 40 + MessageAreaHeight + 4);
         
         // 将消息面板和输入条都挂在 container 下，方便整体拖动
         _chatContainer.AddChild(_messagePanel);
@@ -430,9 +429,10 @@ public partial class ChatPanel : CanvasLayer
             TopOffset
         );
 
-        _chatContainer.Size = new Vector2(PanelWidth, MessageAreaHeight + InputBarHeight + 4);
-        _messagePanel.Position = Vector2.Zero;
-        _inputBar.Position = new Vector2(0, MessageAreaHeight + 4);
+		_chatContainer.Size = new Vector2(PanelWidth, DragHandleHeight + MessageAreaHeight + InputBarHeight + 4);
+		_dragHandle.Position = new Vector2(0, 0);
+		_messagePanel.Position = new Vector2(0, DragHandleHeight);
+		_inputBar.Position = new Vector2(0, DragHandleHeight + MessageAreaHeight + 4);
     }
 
 	static void ApplyPanelStyle(PanelContainer panel, Color bgColor, int cornerRadius)
@@ -628,8 +628,15 @@ public partial class ChatPanel : CanvasLayer
 
 		if (evt is InputEventMouseMotion mm && _isDragging)
 		{
+			// 直接计算全局增量，避免累积误差
 			Vector2 delta = mm.GlobalPosition - _dragStartMousePos;
-			_chatContainer.GlobalPosition = _dragStartContainerPos + delta;
+			Vector2 newPos = _dragStartContainerPos + delta;
+			Vector2 screenSize = GetViewport().GetVisibleRect().Size;
+
+			newPos.X = Mathf.Clamp(newPos.X, 0, screenSize.X - _chatContainer.Size.X);
+			newPos.Y = Mathf.Clamp(newPos.Y, 0, screenSize.Y - _chatContainer.Size.Y);
+			
+			_chatContainer.GlobalPosition = newPos;
 		}
 	}
 
@@ -641,20 +648,32 @@ public partial class ChatPanel : CanvasLayer
 		_messagePanel.Visible = !_isCollapsed;
 		_inputBar.Visible = !_isCollapsed;
 
+		if (_isCollapsed)
+		{
+			_chatContainer.Size = new Vector2(PanelWidth, DragHandleHeight);
+			// 确保折叠时容器不会拦截鼠标（除了拖拽条本身）
+			_chatContainer.MouseFilter = Control.MouseFilterEnum.Ignore; 
+		}
+		else
+		{
+			_chatContainer.Size = new Vector2(PanelWidth, DragHandleHeight + MessageAreaHeight + InputBarHeight + 4);
+			_chatContainer.MouseFilter = Control.MouseFilterEnum.Pass;
+		}
+
 		// 改变拖拽条样式
 		var style = (StyleBoxFlat)_dragHandle.GetThemeStylebox("panel");
 		if (_isCollapsed)
 		{
 			style.CornerRadiusBottomLeft = 15;
 			style.CornerRadiusBottomRight = 15;
-			_handleIndicator.Modulate = new Color(0.5f, 0.5f, 0.5f); // 变灰表示关闭
+			_handleIndicator.Modulate = CollapseIndicatorColor; // 变白表示关闭
 			_handleIndicator.CustomMinimumSize = new Vector2(40, 6); // 变短一点
 		}
 		else
 		{
 			style.CornerRadiusBottomLeft = 0;
 			style.CornerRadiusBottomRight = 0;
-			_handleIndicator.Modulate = new Color(1, 1, 1); // 恢复蓝色
+			_handleIndicator.Modulate = HandleIndicatorColor; // 恢复蓝色
 			_handleIndicator.CustomMinimumSize = new Vector2(60, 6);
 		}
 	}
