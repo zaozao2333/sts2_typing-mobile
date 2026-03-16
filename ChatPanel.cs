@@ -66,10 +66,10 @@ public partial class ChatPanel : CanvasLayer
 	bool _isDragging;
 	Vector2 _dragStartMousePos;
 	Vector2 _dragStartContainerPos;
-	bool _isLongPress;
-	float _longPressTimer;
-	const float LongPressThreshold = 0.2f; // 长按阈值（秒）
-    private SceneTreeTimer? _longPressTimerNode; // 使用场景树计时器代替手动累加
+
+	PanelContainer _dragHandle = null!; // 新增拖拽条
+	ColorRect _handleIndicator = null!; // 图片中的蓝色横条
+	bool _isCollapsed;
 
 	Control? _activePreview;
 	string? _activePreviewMeta;
@@ -163,82 +163,28 @@ public partial class ChatPanel : CanvasLayer
 		UpdatePreviewPosition();
 	}
 
-    public override void _Input(InputEvent evt)
-    {
+	public override void _Input(InputEvent evt)
+	{
+		// 1. 处理表情面板点击外部关闭逻辑
 		if (_emojiOpen && evt is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left } mb)
 		{
-			// 检查点击位置是否在弹出框或按钮之外
 			bool clickedInsidePopup = _emojiPopup.GetGlobalRect().HasPoint(mb.GlobalPosition);
 			bool clickedInsideButton = _emojiButton.GetGlobalRect().HasPoint(mb.GlobalPosition);
 
 			if (!clickedInsidePopup && !clickedInsideButton)
 			{
 				CloseEmojiPopup();
-				// 这里不设为 Handled，允许点击穿透处理其他 UI 逻辑
 			}
 		}
 
-        if (evt is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left, AltPressed: true })
-        {
-            if (TrySendHoveredItemLink())
-                GetViewport().SetInputAsHandled();
-            return;
-        }
-
-        // 2. 鼠标按下：启动计时器
-        if (evt is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left } mouseButton)
-        {
-            var hovered = GetViewport().GuiGetHoveredControl();
-            if (hovered != null && (_messagePanel.IsAncestorOf(hovered) || hovered == _messagePanel))
-            {
-                _isLongPress = true;
-                _dragStartMousePos = mouseButton.GlobalPosition; // 使用 GlobalPosition 减少坐标转换误差
-                _dragStartContainerPos = _chatContainer.GlobalPosition;
-                
-                // 优化：取消上一轮计时（防止快速点按冲突）
-                _longPressTimerNode = null; 
-                
-                // 创建一个 0.5s 后执行的异步任务，标记开始拖拽
-                _longPressTimerNode = GetTree().CreateTimer(LongPressThreshold);
-                _longPressTimerNode.Timeout += () => {
-                    if (_isLongPress) {
-                        _isDragging = true;
-                        Input.SetDefaultCursorShape(Input.CursorShape.Drag);
-                    }
-                };
-                
-                GetViewport().SetInputAsHandled();
-            }
-            return;
-        }
-
-        // 3. 鼠标移动：平滑更新
-        if (evt is InputEventMouseMotion mouseMotion && _isDragging)
-        {
-            // 直接计算全局增量，避免累积误差
-            Vector2 delta = mouseMotion.GlobalPosition - _dragStartMousePos;
-            Vector2 newPos = _dragStartContainerPos + delta;
-            
-            // 限制在屏幕内，防止拖丢
-            var screenSize = GetViewport().GetVisibleRect().Size;
-            newPos.X = Mathf.Clamp(newPos.X, 0, screenSize.X - _chatContainer.Size.X);
-            newPos.Y = Mathf.Clamp(newPos.Y, 0, screenSize.Y - _chatContainer.Size.Y);
-            
-            _chatContainer.GlobalPosition = newPos;
-
-            GetViewport().SetInputAsHandled();
-            return;
-        }
-
-        // 4. 鼠标释放：重置状态
-        if (evt is InputEventMouseButton { Pressed: false, ButtonIndex: MouseButton.Left })
-        {
-            _isLongPress = false;
-            _isDragging = false;
-            Input.SetDefaultCursorShape(Input.CursorShape.Arrow);
-            return;
-        }
-    }
+		// 2. 处理 Alt+左键 快速发送物品链接
+		if (evt is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left, AltPressed: true })
+		{
+			if (TrySendHoveredItemLink())
+				GetViewport().SetInputAsHandled();
+			return;
+		}
+	}
 
 	#region UI Construction
 
@@ -285,9 +231,39 @@ public partial class ChatPanel : CanvasLayer
         };
         _messageList.AddThemeConstantOverride("separation", 4);
 
+		_dragHandle = new PanelContainer {
+			Name = "DragHandle",
+			CustomMinimumSize = new Vector2(PanelWidth, 40), // 足够点击的高度
+			MouseFilter = Control.MouseFilterEnum.Stop
+		};
+		var handleStyle = new StyleBoxFlat {
+			BgColor = new Color(1, 1, 1, 0.9f), // 半透明白
+			CornerRadiusTopLeft = 15,
+			CornerRadiusTopRight = 15,
+			ContentMarginTop = 15
+		};
+		_dragHandle.AddThemeStyleboxOverride("panel", handleStyle);
+
+		// 蓝色指示条
+		_handleIndicator = new ColorRect {
+			Color = new Color(0.2f, 0.45f, 0.9f), // 亮蓝色
+			CustomMinimumSize = new Vector2(60, 6),
+			SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter,
+			SizeFlagsVertical = Control.SizeFlags.ShrinkBegin
+		};
+		_dragHandle.AddChild(_handleIndicator);
+		_dragHandle.GuiInput += OnDragHandleInput;
+
         // --- 2. 组装层级阶段 (将所有节点添加到场景树) ---
         AddChild(_root);
-        _root.AddChild(_chatContainer);
+		_root.AddChild(_chatContainer);
+		_chatContainer.AddChild(_dragHandle); // 放在最上方
+		_chatContainer.AddChild(_messagePanel);
+		_chatContainer.AddChild(_inputBar);
+
+		// 调整位置偏移，让面板紧贴拖拽条下方
+		_messagePanel.Position = new Vector2(0, 40);
+		_inputBar.Position = new Vector2(0, 40 + MessageAreaHeight + 4);
         
         // 将消息面板和输入条都挂在 container 下，方便整体拖动
         _chatContainer.AddChild(_messagePanel);
@@ -623,12 +599,72 @@ public partial class ChatPanel : CanvasLayer
 
 	#endregion
 
+	#region DragHandle
+
+	void OnDragHandleInput(InputEvent evt)
+	{
+		// 拖拽逻辑
+		if (evt is InputEventMouseButton mb)
+		{
+			if (mb.ButtonIndex == MouseButton.Left)
+			{
+				if (mb.Pressed)
+				{
+					_isDragging = true;
+					_dragStartMousePos = mb.GlobalPosition;
+					_dragStartContainerPos = _chatContainer.GlobalPosition;
+				}
+				else
+				{
+					// 点击判定：如果没怎么移动就松开，视为点击切换折叠
+					if (!_isDragging || mb.GlobalPosition.DistanceTo(_dragStartMousePos) < 5f)
+					{
+						ToggleCollapse();
+					}
+					_isDragging = false;
+				}
+			}
+		}
+
+		if (evt is InputEventMouseMotion mm && _isDragging)
+		{
+			Vector2 delta = mm.GlobalPosition - _dragStartMousePos;
+			_chatContainer.GlobalPosition = _dragStartContainerPos + delta;
+		}
+	}
+
+	void ToggleCollapse(bool? forceState = null)
+	{
+		_isCollapsed = forceState ?? !_isCollapsed;
+
+		// 切换内容显示
+		_messagePanel.Visible = !_isCollapsed;
+		_inputBar.Visible = !_isCollapsed;
+
+		// 改变拖拽条样式
+		var style = (StyleBoxFlat)_dragHandle.GetThemeStylebox("panel");
+		if (_isCollapsed)
+		{
+			style.CornerRadiusBottomLeft = 15;
+			style.CornerRadiusBottomRight = 15;
+			_handleIndicator.Modulate = new Color(0.5f, 0.5f, 0.5f); // 变灰表示关闭
+			_handleIndicator.CustomMinimumSize = new Vector2(40, 6); // 变短一点
+		}
+		else
+		{
+			style.CornerRadiusBottomLeft = 0;
+			style.CornerRadiusBottomRight = 0;
+			_handleIndicator.Modulate = new Color(1, 1, 1); // 恢复蓝色
+			_handleIndicator.CustomMinimumSize = new Vector2(60, 6);
+		}
+	}
+
+	#endregion
+	#region Messaging
 	void OnSendButtonPressed()
 	{
 		SubmitMessage();
 	}
-
-	#region Messaging
 
 	void SubmitMessage()
 	{
@@ -804,6 +840,10 @@ public partial class ChatPanel : CanvasLayer
 			oldest.QueueFree();
 		}
 
+		if (_isCollapsed)
+		{
+			ToggleCollapse(false); // 收到消息自动展开
+		}
 		_pendingScroll = true;
 	}
 
